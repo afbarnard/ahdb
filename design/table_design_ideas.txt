@@ -1,0 +1,207 @@
+Table Design Ideas
+==================
+
+
+Ideas for how to design and implement a table data structure suitable
+for machine learning and similar analysis tasks.  (General inspiration
+is C-Store / Vertica and Sqlite.  I want the no-configuration, in-memory
+only or on disk, library, local aspects of Sqlite with the
+read-optimized column store and algorithms of C-Store.)
+
+
+* optimized for reading (and querying)
+* manipulation via API, SQL could be "compiled" into API calls
+* read raw data from file as objects, convert later to columns of
+  specific types, original string and file location part of object to
+  assist errors
+* table-level locking, multiple readers at once OK but only single
+  writer
+* permissions via filesystem (with set GID)
+* store data in columns of uniform type (arrays)
+* column arrays stored in blocks for efficient allocation
+  * block sizes could vary (increase) as table grows
+  * combine blocks a la C-Store / Vertica
+* table consists of header and columns and version number
+* header stores information about names, locations, and types of columns
+  * primitives: int, float, string, date, boolean, object (blob?)
+  * types are primitives, union of primitives, or arrays (nested arrays?)
+  * for heterogeneous (union) columns, need array to hold type codes for
+    each value; this array can also reserve a bit of each entry to
+    encode (non)null; (otherwise need separate bit array to encode
+    (non)null)
+* views store underlying table and lists of column and row indices,
+  table version number
+* views store generating "query" in order to regenerate contents if
+  table updates (?)
+  * compare Spark's RDDs
+* views can be materialized
+* views enable lightweight data operations
+* query results as views? would imply views can reference multiple
+  tables
+* rows only appended in order to preserve validity of indices in views
+* row deletion accomplished via table keeping invalid row list or bitmap
+* table can be vacuumed/compacted later
+* table version number updated when reorganizing storage so as to
+  invalidate a view (e.g. vacuum)
+* table interface implemented by both in-memory and on-disk structures
+* rely on virtual memory system for buffer management of on-disk
+  storage, a la MonetDB (?)
+* tables always know their size
+* tables stored in insertion order (array indices are virtual row IDs)
+* tables could be stored in some sorted order (e.g. by key) but how deal
+  with adding rows? break table into multiple sorted partitions?
+* indexes a la C-Store
+  * main storage array of column values in order
+  * index is sorted values with corresponding array of row indices
+  * also include a histogram as a top-level root that points (via
+    indices) into sorted values
+    * for small sets of values (e.g. <= 10, but configurable) treat as
+      discrete; each value is associated with count (which is also end
+      index into sorted values)
+    * for large sets of values use equal frequency bins; each value has
+      a count which is number of values less than it and also serves as
+      a range end index; only search range of start index (previous end
+      index) to end index
+    * if all values in histogram, then no list of sorted values needed
+      because histogram effectively run-length encodes data; only need
+      list of row indices
+* compression?
+  * histogram as index achieves some of this
+  * delta encoding for floats?
+* ACID?
+* support null values
+  * need bitmaps for null values (unless column type is object? can zero
+    object value always mean null?)
+  * bitmaps and sorted lists of indices of (non-)null values equivalent
+    except bitmap has better random access
+  * support sparse columns consisting of (row index, value) pairs
+    * nulls are not stored and no bitmap is needed
+    * search is needed to get the value for a row if random access
+    * no search is needed for iterating over column values
+* missing values
+  * imputation views where a view of a table is combined with a strategy
+    for filling in missing values
+  * imputation strategies
+    * single, default value per table (a la sparse matrix)
+    * single, default value per column (user-specified)
+    * single, default value per column computed as a function of the
+      column values, e.g. mean or median (or user-specified column
+      function)
+    * function to compute value based on row: this allows the use of a
+      model of P(missing|existing) (or similar) to fill in the missing
+      values based on maximum probability or sampling, etc.  The
+      function would be run each time the missing value was asked for.
+      Consequences: for efficiency the view should be materialized, for
+      imputation with sampling it would be like bootstrapping to iterate
+      over the table multiple times; for efficiency (or a guaranteed
+      static view), the view should be materialized and also probably
+      saved off as a new table.
+* sorting based on one-pass histograms (basically a bucket sort with
+  extra information to help make bucket sizes uniform)
+  * on a first pass, collect histogram that describes precise quantile
+    boundaries; quantile sizes do not have to be regular, but the more
+    regular the better
+  * on a second pass, scatter each record to an appropriate partition
+    based on the histogram
+  * sort each partition
+  * gather partitions
+  * As an alternative, the first pass could include sorting chunks as
+    they are encountered which would be written out as runs.  Then the
+    second pass would scatter the appropriate range of each run to its
+    partition.  Then each partition could just merge all its runs
+    instead of sorting.  Not sure which approach minimizes comparisons.
+  * improvement: scatter as the histogram is being built to reduce to
+    one pass
+* how implement row data structure? (fixed-length heterogeneous arrays)
+* stream of rows or row iterator holds reference to header rather than
+  each row having header reference
+* no header views, construct new headers
+* read/write tables in CSV, YAML, ARFF formats
+* column interface could enable multiple underlying representations
+  (e.g. compressed, sparse), possibly include indices
+* arrays as table elements
+* lookup index: sorted floating point values and their row indices
+* lookup index: indices of categorical values by category
+* column type modifiers: array, categorical/enum?
+* tables/columns with copy-on-write behavior?
+* as backing for disk-based matrix? (matrix-like access and indexing?)
+* limit threads by worker pool
+* limit memory by buffer pool? (what about memory-mapped files?)
+* Dustky (data science toolkit) ?
+
+
+Data Operations
+---------------
+
+* order statistics and empirical distributions
+* histograms
+* percentiles estimator
+  * exemplar (by "floor" index)
+  * weighted sum of 2 neighbors based on distance (like median
+    estimator) -> no bias
+* group-by into columns (perhaps via group-by into arrays, then arrays
+  into columns)
+* collect from multiple tables by ID (merge_collect)
+* transpose
+* covariance matrix
+* sampling
+* partitioning (folds)
+* rownum(), rowid()
+* columns from user-defined functions
+* insert arrays as rows or columns
+
+
+Table Interface
+---------------
+
+* length (always available, constant-time operation)
+* width
+* select
+* project
+* add row
+* delete row
+* update row
+* add column
+* delete column
+* column names
+* column types
+* iterate over rows
+* get row by ID/index
+
+
+Column Interface
+----------------
+
+* length
+* get element at index (typed)
+* get indices (and values) satisfying condition (search)
+* set element at index
+* add element
+* vacuum
+* add lookup index
+* remove lookup index
+* compress
+* implement statistical collection interface?
+
+
+Row Interface
+-------------
+
+* length (width)
+* get element at index (object)
+* get typed element at index (?) to avoid casting
+* implement as view for reading and as instantiation for transforming
+
+
+* cell interface?
+
+
+Similar Software (?)
+--------------------
+
+* SFrame (Dato)
+* DataFrame (R)
+* Pandas
+* Spark RDD
+* others?
+* academic literature?

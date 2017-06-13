@@ -1,0 +1,202 @@
+Research Database
+
+
+Intended Uses:
+* Querying data (selection, sorting, aggregates, etc.)
+* Transforming data (provide functions to make this easy, including changing types -> expressions and functions)
+* Rare updates (mostly bulk load and query), but support programmatic construction reasonably efficiently
+* Rare access by multiple processes (but multiple threads?)
+* In-language API interface
+* Command line interface?
+* ODBC interface?
+* Like Sqlite but able to handle large workloads
+* Like PyTables but has indexes for free
+* Support general disk-based data structures? (see below)
+
+
+Features:
+* Scalable to 100G data (1T or more?)
+* As fast as possible
+* Stores data in files (option of regular files and HD5?)
+* No complicated setup or configuration
+* OS file access determines user access
+* Simple to understand, use
+* User-defined aggregates, mapping user-defined functions
+* Proper sampling
+* ACID: consistency, isolation, but not necessarily atomicity or durability (durability through flushing only, for example)
+* Read and write all sorts of relational data formats
+** Multiple CSV files
+** Sqlite
+** ARFF
+** Matlab?
+** HD5?
+** SQL (files, data in other DB)?
+** Prolog
+* Adapts to memory conditions / desired resource constraints
+* Null values
+* Objects as blobs? i.e. non queryable, but get/set
+* Efficient sparse data
+* Attach a file or set of files as a relation, data types automatically detected
+* File-system-like namespaces
+* High-level operations for convenience: search, diff
+
+
+Non-Features:
+* High concurrency
+* Recovery (just rely on file backup instead)
+* Object or complex types
+* Triggers
+* Stored procedures (just write app code)
+* Users, roles
+* Distributed
+
+
+How:
+* Column store
+* Partitioned data for parallelism, threads to process
+* Simple concurrency control
+** Locks per table (or DB?)
+** Reads wait for writes
+** Writes wait for reads
+** Writes wait for writes
+** Reads immediately multiplex
+* DB server per process
+* Buffer management via virtual memory system a la MonetDB?
+* Strings accessed by hash?
+
+
+See Also:
+* MonetDB
+* LucidDB
+* HSQLDB
+* PyTables
+
+
+Disk-based data structures
+* Table
+* Hash table
+* Multidimensional (sparse) array
+* Tree
+* List (array?, linked?)
+* Set
+
+
+Ad Hoc DB
+---------
+
+* minimal configuration
+  * goal: just start running queries on tabular files in a directory
+    * queries via command line a la CSVKit or via Python API
+    * eventually support SQL as defined by Postgres
+  * list files to include in DB or assume all in directory
+  * infer schema given tabular files
+    * given delimiter
+    * or also infer delimiter
+  * define schema manually
+  * database defined piecemeal as needed
+    * configuration saved so that can be omitted in future
+  * automatically detect changed data (take note of file size,
+    modification time, and checksum)
+  * define schema in YAML or infer schema and store as YAML
+  * store schema and configuration in local, "top-level" directory .ahdb
+    * use hierarchy of config (built-in, system, user, local)
+  * automatically, lazily build indexes of columns as they are read
+    * indexes written out in background
+  * cooperatively schedulable with other jobs
+    * limit threads
+    * limit memory
+* Spark-like API which builds up expressions and data pipelines that are
+  lazily executed
+  * pure views, in-memory views, materialized views
+  * SQL compiled to expression
+  * expression executed by backend, possibly by translating to SQL
+* front end in Python, backends for various DBs
+  * facilitate comparisons between backends but also allow to use
+    favorite DB -> unified data analysis API
+  * implement naive backend in Python using CSV tools a la CSVKit
+  * implement good backend in Rust (plus Python interface)
+  * comparison backends: CSVKit, SQLite, PostgreSQL, MonetDB
+  * other backends: Pandas, NumPy, PyTables
+* analysis features
+  * covariance matrix
+  * empirical distributions
+  * histograms
+  * user-defined functions and aggregates (pipe data through Python)
+  * merge collect
+
+
+Tables and Files
+----------------
+
+* a table can have multiple partitions, each read from its own file
+* table must represent and keep track of partitions
+  * issue of where to put new data when multiple partitions
+  * processing takes place at partition level
+* each file can have its own columns
+* table consists of union of columns of constituent files
+* columns missing from a constituent file treated as NULL (unless
+  otherwise specified)
+* can specify default value for a column
+  * useful for converting information in the filename (e.g. data
+    collection date, data label) into accessible data
+  * default values can be entirely virtual
+* each constituent file corresponds to a sub table or partition?
+* track size, modification time, and checksum of each file (like some
+  build systems) in order to properly detect updated files
+* need notion of volatility and how often to poll files for updates
+* virtual columns via Python functions or SQL
+* option to materialize virtual columns
+
+
+A Filesystem of Tables
+----------------------
+
+Instead of traditional namespaces or userspaces each table is accessible
+via various "directories", just like a file in a filesystem.
+
+* shell provides filesystem-like view of tables
+  * see tables in current view with `ls`
+  * change part of view with `cd`
+  * show current view `pwd`
+  * view is just a set of tags
+
+* root of each Ad Hoc DB working structure has meta info and temporary
+  storage like .svn or .git
+
+* mount other Ad Hoc databases to parts of filesystem
+
+* each table accessible (at least) at a particular DB-relative path or
+  "directory"
+
+* a "directory" is just a hierarchical tag
+
+* each table can have multiple tags, each tag can have mutiple tables
+
+* tags function just like hard links
+
+* use path syntax for tags:
+  e.g. "project6:tasks/task2:tasks/task3:meta/ontology" denotes the
+  location of a table with 4 hierarchical tags
+
+* canonical path form would be sorted tags
+
+* is there a meaning to a rooted hierarchical tag?
+  e.g. "project6:/global/meta/ontology"
+
+* access control via external filesystem
+
+* engines
+  * None for unspecified
+  * engine.Memory for loading tables into memory
+  * engine.Files for sequentially accessing files as needed (a la
+    command line, grep, Unix utils)
+  * engine.Ahdb custom memory-bounded engine (basically hybrid of memory
+    and files)
+  * engine.Sqlite
+  * engine.CsvKit
+  * engine.Postgres
+  * etc.
+
+* engines control storage
+* engines provide for comparisons
+* engines provide single API to many data sources
